@@ -11,14 +11,35 @@ import (
 	"argon-go/pkgconfig"
 	"argon-go/utils"
 )
-func getDomain(args *cli.InstallArgs) string {
-	if args.Codeberg {
-		return "codeberg.org"
-	}
-	if args.GitLab {
+func getDomainFromURL(pkg string) string {
+	if strings.Contains(pkg, "gitlab.com") {
 		return "gitlab.com"
 	}
+	if strings.Contains(pkg, "codeberg.org") {
+		return "codeberg.org"
+	}
+	if strings.Contains(pkg, "github.com") {
+		return "github.com"
+	}
+	parts := strings.Split(pkg, "/")
+	if len(parts) > 2 && strings.Contains(parts[0], ".") {
+		return parts[0]
+	}
 	return "github.com"
+}
+func extractRepoPath(pkg string) string {
+	parts := strings.Split(pkg, "://")
+	if len(parts) > 1 {
+		pkg = parts[1]
+	}
+	parts = strings.Split(pkg, "/")
+	start := 0
+	for i, part := range parts {
+		if strings.Contains(part, ".") {
+			start = i + 1
+		}
+	}
+	return strings.Join(parts[start:], "/")
 }
 func runCommand(cmd string) error {
 	c := exec.Command("sh", "-c", cmd)
@@ -55,12 +76,14 @@ func handleExistingDir(buildDir string) bool {
 		return false
 	}
 }
-func cloneRepo(pkg, domain, branch, buildDir string) error {
+func cloneRepo(pkg, branch, buildDir string) error {
+	domain := getDomainFromURL(pkg)
+	repoPath := extractRepoPath(pkg)
 	var cmd string
 	if branch != "" {
-		cmd = fmt.Sprintf("git clone --depth=1 --branch %s https://%s/%s %s", branch, domain, pkg, buildDir)
+		cmd = fmt.Sprintf("git clone --depth=1 --branch %s https://%s/%s %s", branch, domain, repoPath, buildDir)
 	} else {
-		cmd = fmt.Sprintf("git clone --depth=1 https://%s/%s %s", domain, pkg, buildDir)
+		cmd = fmt.Sprintf("git clone --depth=1 https://%s/%s %s", domain, repoPath, buildDir)
 	}
 	return runCommand(cmd)
 }
@@ -142,23 +165,107 @@ func buildWithShellScript(buildDir string) error {
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
+func findBuildFilesRecursive(startDir string) ([]string, string) {
+	buildFiles := []string{}
+	knownFiles := []string{"Makefile", "makefile", "Cargo.toml", "CMakeLists.txt", "configure", "build.zig", "build.sh"}
+	
+	currentDir := startDir
+	for {
+		for _, file := range knownFiles {
+			path := filepath.Join(currentDir, file)
+			if utils.FileExists(path) {
+				buildFiles = append(buildFiles, path)
+			}
+		}
+		if len(buildFiles) > 0 {
+			return buildFiles, currentDir
+		}
+		parent := filepath.Dir(currentDir)
+		if parent == currentDir {
+			break
+		}
+		currentDir = parent
+	}
+	return buildFiles, ""
+}
+func displayBuildFileWithLess(filepath string) error {
+	cmd := exec.Command("less", filepath)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+func confirmBuild() bool {
+	fmt.Print("\nProceed with build? [y/N]: ")
+	reader := bufio.NewReader(os.Stdin)
+	response, _ := reader.ReadString('\n')
+	response = strings.TrimSpace(strings.ToLower(response))
+	return response == "y" || response == "yes"
+}
 func detectAndBuild(buildDir, repoName string) error {
+	if !pkgconfig.CheckPkgConfigExists() {
+		fmt.Println("Warning: pkg-config not found in PATH")
+	}
+	
 	cflags, libs := pkgconfig.GetFlags(repoName)
-	switch {
-	case utils.FileExists(filepath.Join(buildDir, "Makefile")) || utils.FileExists(filepath.Join(buildDir, "makefile")):
+	
+	buildFiles, foundDir := findBuildFilesRecursive(buildDir)
+	if len(buildFiles) == 0 {
+		return fmt.Errorf("no supported build system found")
+	}
+	
+	var selectedBuildFile string
+	if len(buildFiles) == 1 {
+		selectedBuildFile = buildFiles[0]
+	} else {
+		fmt.Println("Multiple build files found:")
+		for i, file := range buildFiles {
+			rel, _ := filepath.Rel(buildDir, file)
+			fmt.Printf("%d. %s\n", i+1, rel)
+		}
+		fmt.Print("Select build file [1]: ")
+		reader := bufio.NewReader(os.Stdin)
+		choice, _ := reader.ReadString('\n')
+		choice = strings.TrimSpace(choice)
+		index := 0
+		if choice != "" {
+			fmt.Sscanf(choice, "%d", &index)
+			index--
+		}
+		if index < 0 || index >= len(buildFiles) {
+			index = 0
+		}
+		selectedBuildFile = buildFiles[index]
+	}
+	
+	fmt.Printf("Using build file: %s\n", selectedBuildFile)
+	fmt.Println("Displaying build file with less (press q to continue)...")
+	if err := displayBuildFileWithLess(selectedBuildFile); err != nil {
+		fmt.Printf("Warning: could not display with less: %v\n", err)
+	}
+	
+	if !confirmBuild() {
+		return fmt.Errorf("build cancelled by user")
+	}
+	
+	buildDir = foundDir
+	filename := filepath.Base(selectedBuildFile)
+	
+	switch filename {
+	case "Makefile", "makefile":
 		return buildWithMake(buildDir, repoName, cflags, libs)
-	case utils.FileExists(filepath.Join(buildDir, "Cargo.toml")):
+	case "Cargo.toml":
 		return buildWithCargo(buildDir)
-	case utils.FileExists(filepath.Join(buildDir, "CMakeLists.txt")):
+	case "CMakeLists.txt":
 		return buildWithCMake(buildDir)
-	case utils.FileExists(filepath.Join(buildDir, "configure")):
+	case "configure":
 		return buildWithConfigure(buildDir)
-	case utils.FileExists(filepath.Join(buildDir, "build.zig")):
+	case "build.zig":
 		return buildWithZig(buildDir)
-	case utils.FileExists(filepath.Join(buildDir, "build.sh")):
+	case "build.sh":
 		return buildWithShellScript(buildDir)
 	default:
-		return fmt.Errorf("no supported build system found")
+		return fmt.Errorf("unsupported build file: %s", filename)
 	}
 }
 func findBinary(buildDir, repoName string) (string, error) {
@@ -208,7 +315,6 @@ func installBinary(buildDir, repoName string, local, yes bool) error {
 func installSingle(pkg string, args *cli.InstallArgs) {
 	fmt.Printf("Installing %s\n", pkg)
 	start := time.Now()
-	domain := getDomain(args)
 	repoName := utils.GetRepoName(pkg)
 	buildDir := filepath.Join("/tmp/argon/builds", repoName)
 	if utils.DirectoryExists(buildDir) && !utils.IsDirEmpty(buildDir) {
@@ -218,7 +324,7 @@ func installSingle(pkg string, args *cli.InstallArgs) {
 			goto build
 		}
 	}
-	if err := cloneRepo(pkg, domain, args.Branch, buildDir); err != nil {
+	if err := cloneRepo(pkg, args.Branch, buildDir); err != nil {
 		fmt.Printf("Failed to clone: %v\n", err)
 		return
 	}
@@ -249,3 +355,4 @@ func HandleInstall(args *cli.InstallArgs) {
 		}
 	}
 }
+
