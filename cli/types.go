@@ -6,8 +6,6 @@ const (
 )
 type InstallArgs struct {
 	Packages      []string
-	GitLab        bool
-	Codeberg      bool
 	Local         bool
 	Branch        string
 	Patches       string
