@@ -14,8 +14,6 @@ func ParseCLI(args []string) CliArgs {
 	case "install":
 		cliArgs.Command = CommandInstall
 		installCmd := flag.NewFlagSet("install", flag.ExitOnError)
-		gitlab := installCmd.Bool("gitlab", false, "")
-		codeberg := installCmd.Bool("codeberg", false, "")
 		local := installCmd.Bool("local", false, "")
 		branch := installCmd.String("branch", "", "")
 		patches := installCmd.String("patches", "", "")
@@ -23,8 +21,6 @@ func ParseCLI(args []string) CliArgs {
 		pkgdeps := installCmd.String("pkgdeps", "", "")
 		installCmd.Parse(args[1:])
 		parsedArgs := InstallArgs{
-			GitLab:   *gitlab,
-			Codeberg: *codeberg,
 			Local:    *local,
 			Branch:   *branch,
 			Patches:  *patches,
@@ -51,3 +47,4 @@ func ParseCLI(args []string) CliArgs {
 	}
 	return cliArgs
 }
+
