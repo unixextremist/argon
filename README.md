@@ -2,7 +2,7 @@
 
 - argon is a *meta?* package manager for git repositories
 
-![]()
+![showcase](showcase.gif)
 
 # how it works?
 
