@@ -6,6 +6,7 @@ const (
 	CommandInstall CommandType = iota
 	CommandList
 	CommandRemove
+	CommandSearch
 	CommandHelp
 	CommandUnknown
 )
@@ -21,4 +22,8 @@ type InstallArgs struct {
 
 type RemoveArgs struct {
 	Package string
+}
+
+type SearchArgs struct {
+	Query string
 }
