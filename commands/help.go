@@ -6,12 +6,13 @@ import (
 
 func Help() {
 	fmt.Println("Argon Package Manager")
-	fmt.Println("Usage: sudo argon <command> [options]")
+	fmt.Println("Usage: argon <command> [options]")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("  install <package> [options]  Install a package")
+	fmt.Println("  install <package> [options]  Install a package (requires sudo)")
 	fmt.Println("  list                          List installed packages")
-	fmt.Println("  remove <package>              Remove a package")
+	fmt.Println("  remove <package>              Remove a package (requires sudo)")
+	fmt.Println("  search <query>                Search for packages")
 	fmt.Println("  help                          Display this help message")
 	fmt.Println()
 	fmt.Println("Install options:")
