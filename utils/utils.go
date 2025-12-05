@@ -22,11 +22,11 @@ func GetInstalledPackages() []Package {
 	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		panic(err)
+		return []Package{}
 	}
 	var packages []Package
 	if err := json.Unmarshal(data, &packages); err != nil {
-		panic(err)
+		return []Package{}
 	}
 	return packages
 }
