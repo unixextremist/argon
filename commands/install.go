@@ -8,42 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
 	"argon-go/cli"
 	"argon-go/pkgconfig"
 	"argon-go/utils"
 )
-
-func getDomainFromURL(pkg string) string {
-	if strings.Contains(pkg, "gitlab.com") {
-		return "gitlab.com"
-	}
-	if strings.Contains(pkg, "codeberg.org") {
-		return "codeberg.org"
-	}
-	if strings.Contains(pkg, "github.com") {
-		return "github.com"
-	}
-	parts := strings.Split(pkg, "/")
-	if len(parts) > 2 && strings.Contains(parts[0], ".") {
-		return parts[0]
-	}
-	return "github.com"
-}
-
-func extractRepoPath(pkg string) string {
-	parts := strings.Split(pkg, "://")
-	if len(parts) > 1 {
-		pkg = parts[1]
-	}
-	parts = strings.Split(pkg, "/")
-	start := 0
-	for i, part := range parts {
-		if strings.Contains(part, ".") {
-			start = i + 1
-		}
-	}
-	return strings.Join(parts[start:], "/")
-}
 
 func runCommand(cmd string) error {
 	c := exec.Command("sh", "-c", cmd)
@@ -83,8 +52,8 @@ func handleExistingDir(buildDir string) bool {
 }
 
 func cloneRepo(pkg, branch, buildDir string) error {
-	domain := getDomainFromURL(pkg)
-	repoPath := extractRepoPath(pkg)
+	domain := utils.GetDomainFromURL(pkg)
+	repoPath := utils.ExtractRepoPath(pkg)
 	var cmd string
 	if branch != "" {
 		cmd = fmt.Sprintf("git clone --depth=1 --branch %s https://%s/%s %s", branch, domain, repoPath, buildDir)
@@ -105,13 +74,21 @@ func applyPatches(buildDir, patchesDir string) error {
 	return runCommand(cmd)
 }
 
-func buildWithMake(buildDir, repoName, cflags, libs string) (string, error) {
+func buildWithMake(buildDir, repoName, cflags, libs string, static bool) (string, error) {
 	env := os.Environ()
 	if cflags != "" {
 		env = append(env, "CFLAGS="+cflags)
 	}
 	if libs != "" {
 		env = append(env, "LDFLAGS="+libs)
+	}
+	if static {
+		staticFlags := "-static"
+		if libs != "" {
+			staticFlags = libs + " -static"
+		}
+		env = append(env, "LDFLAGS="+staticFlags)
+		env = append(env, "CC=gcc -static")
 	}
 	cmd := exec.Command("make")
 	cmd.Dir = buildDir
@@ -121,18 +98,26 @@ func buildWithMake(buildDir, repoName, cflags, libs string) (string, error) {
 	return "make", cmd.Run()
 }
 
-func buildWithCargo(buildDir string) (string, error) {
-	cmd := exec.Command("cargo", "build", "--release")
+func buildWithCargo(buildDir string, static bool) (string, error) {
+	if static {
+		return "", fmt.Errorf("static builds not supported for cargo")
+	}
+	args := []string{"build", "--release"}
+	cmd := exec.Command("cargo", args...)
 	cmd.Dir = buildDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return "cargo", cmd.Run()
 }
 
-func buildWithCMake(buildDir string) (string, error) {
+func buildWithCMake(buildDir string, static bool) (string, error) {
+	if static {
+		return "", fmt.Errorf("static builds not supported for cmake")
+	}
 	buildPath := filepath.Join(buildDir, "build")
 	os.MkdirAll(buildPath, 0755)
-	cmd1 := exec.Command("cmake", "..")
+	args := []string{".."}
+	cmd1 := exec.Command("cmake", args...)
 	cmd1.Dir = buildPath
 	cmd1.Stdout = os.Stdout
 	cmd1.Stderr = os.Stderr
@@ -146,8 +131,12 @@ func buildWithCMake(buildDir string) (string, error) {
 	return "cmake", cmd2.Run()
 }
 
-func buildWithConfigure(buildDir string) (string, error) {
-	cmd1 := exec.Command("./configure")
+func buildWithConfigure(buildDir string, static bool) (string, error) {
+	if static {
+		return "", fmt.Errorf("static builds not supported for configure")
+	}
+	args := []string{"./configure"}
+	cmd1 := exec.Command(args[0], args[1:]...)
 	cmd1.Dir = buildDir
 	cmd1.Stdout = os.Stdout
 	cmd1.Stderr = os.Stderr
@@ -161,19 +150,28 @@ func buildWithConfigure(buildDir string) (string, error) {
 	return "configure", cmd2.Run()
 }
 
-func buildWithZig(buildDir string) (string, error) {
-	cmd := exec.Command("zig", "build")
+func buildWithZig(buildDir string, static bool) (string, error) {
+	if static {
+		return "", fmt.Errorf("static builds not supported for zig")
+	}
+	args := []string{"build"}
+	cmd := exec.Command("zig", args...)
 	cmd.Dir = buildDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return "zig", cmd.Run()
 }
 
-func buildWithShellScript(buildDir string) (string, error) {
+func buildWithShellScript(buildDir string, static bool) (string, error) {
+	if static {
+		return "", fmt.Errorf("static builds not supported for shell scripts")
+	}
 	scriptPath := filepath.Join(buildDir, "build.sh")
 	os.Chmod(scriptPath, 0755)
+	env := os.Environ()
 	cmd := exec.Command("./build.sh")
 	cmd.Dir = buildDir
+	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return "shell", cmd.Run()
@@ -182,7 +180,7 @@ func buildWithShellScript(buildDir string) (string, error) {
 func findBuildFilesRecursive(startDir string) ([]string, string) {
 	buildFiles := []string{}
 	knownFiles := []string{"Makefile", "makefile", "Cargo.toml", "CMakeLists.txt", "configure", "build.zig", "build.sh"}
-	
+
 	currentDir := startDir
 	for {
 		for _, file := range knownFiles {
@@ -219,18 +217,24 @@ func confirmBuild() bool {
 	return response == "y" || response == "yes"
 }
 
-func detectAndBuild(buildDir, repoName string) (string, error) {
+func detectAndBuild(buildDir, repoName string, static bool) (string, error) {
+	fmt.Printf("DEBUG: static=%t\n", static)
+	
+	if static {
+		return "", fmt.Errorf("static builds not supported")
+	}
+
 	if !pkgconfig.CheckPkgConfigExists() {
 		fmt.Println("Warning: pkg-config not found in PATH")
 	}
-	
-	cflags, libs := pkgconfig.GetFlags(repoName)
-	
+
+	cflags, libs := pkgconfig.GetFlags(repoName, static)
+
 	buildFiles, foundDir := findBuildFilesRecursive(buildDir)
 	if len(buildFiles) == 0 {
 		return "", fmt.Errorf("no supported build system found")
 	}
-	
+
 	var selectedBuildFile string
 	if len(buildFiles) == 1 {
 		selectedBuildFile = buildFiles[0]
@@ -254,44 +258,46 @@ func detectAndBuild(buildDir, repoName string) (string, error) {
 		}
 		selectedBuildFile = buildFiles[index]
 	}
-	
+
 	fmt.Printf("Using build file: %s\n", selectedBuildFile)
 	fmt.Println("Displaying build file with less (press q to continue)...")
 	if err := displayBuildFileWithLess(selectedBuildFile); err != nil {
 		fmt.Printf("Warning: could not display with less: %v\n", err)
 	}
-	
+
 	if !confirmBuild() {
 		return "", fmt.Errorf("build cancelled by user")
 	}
-	
+
 	buildDir = foundDir
 	filename := filepath.Base(selectedBuildFile)
-	
+
 	switch filename {
 	case "Makefile", "makefile":
-		return buildWithMake(buildDir, repoName, cflags, libs)
+		return buildWithMake(buildDir, repoName, cflags, libs, static)
 	case "Cargo.toml":
-		return buildWithCargo(buildDir)
+		return buildWithCargo(buildDir, static)
 	case "CMakeLists.txt":
-		return buildWithCMake(buildDir)
+		return buildWithCMake(buildDir, static)
 	case "configure":
-		return buildWithConfigure(buildDir)
+		return buildWithConfigure(buildDir, static)
 	case "build.zig":
-		return buildWithZig(buildDir)
+		return buildWithZig(buildDir, static)
 	case "build.sh":
-		return buildWithShellScript(buildDir)
+		return buildWithShellScript(buildDir, static)
 	default:
 		return "", fmt.Errorf("unsupported build file: %s", filename)
 	}
 }
 
-func findBinary(buildDir, repoName string) (string, error) {
+func findBinary(buildDir, repoName string, static bool) (string, error) {
 	possiblePaths := []string{
 		filepath.Join(buildDir, repoName),
 		filepath.Join(buildDir, "target", "release", repoName),
+		filepath.Join(buildDir, "target", "x86_64-unknown-linux-musl", "release", repoName),
 		filepath.Join(buildDir, "build", repoName),
 	}
+	
 	for _, path := range possiblePaths {
 		if utils.FileExists(path) {
 			return path, nil
@@ -300,8 +306,8 @@ func findBinary(buildDir, repoName string) (string, error) {
 	return "", fmt.Errorf("binary not found")
 }
 
-func installBinary(buildDir, repoName string, local, yes bool) error {
-	binaryPath, err := findBinary(buildDir, repoName)
+func installBinary(buildDir, repoName string, local, yes, static bool) error {
+	binaryPath, err := findBinary(buildDir, repoName, static)
 	if err != nil {
 		return err
 	}
@@ -319,38 +325,47 @@ func installBinary(buildDir, repoName string, local, yes bool) error {
 	return runCommand(cmd)
 }
 
-func addToPackageList(pkg, repoName, buildSystem, hash string) error {
+func addToPackageList(pkg, repoName, buildSystem, hash string, local, static bool) error {
 	packages := utils.GetInstalledPackages()
-	
+
 	for i, existingPkg := range packages {
 		if existingPkg.Name == repoName {
 			packages[i].Repo = pkg
 			packages[i].BuildSystem = buildSystem
 			packages[i].Hash = hash
+			packages[i].Local = local
+			packages[i].Static = static
 			return utils.SaveInstalledPackages(packages)
 		}
 	}
-	
+
 	newPackage := utils.Package{
 		Name:        repoName,
 		Repo:        pkg,
 		BuildSystem: buildSystem,
 		Hash:        hash,
+		Local:       local,
+		Static:      static,
 	}
-	
+
 	packages = append(packages, newPackage)
 	return utils.SaveInstalledPackages(packages)
 }
 
 func installSingle(pkg string, args *cli.InstallArgs) {
+	if strings.HasPrefix(pkg, "--") {
+		fmt.Printf("Warning: Skipping '%s' as it appears to be a flag, not a package\n", pkg)
+		return
+	}
+
 	fmt.Printf("Installing %s\n", pkg)
 	start := time.Now()
 	repoName := utils.GetRepoName(pkg)
 	buildDir := filepath.Join("/tmp/argon/builds", repoName)
-	
+
 	var hash string
 	var err error
-	
+
 	if utils.DirectoryExists(buildDir) && !utils.IsDirEmpty(buildDir) {
 		if !handleExistingDir(buildDir) {
 			os.RemoveAll(buildDir)
@@ -362,37 +377,37 @@ func installSingle(pkg string, args *cli.InstallArgs) {
 			goto build
 		}
 	}
-	
+
 	if err := cloneRepo(pkg, args.Branch, buildDir); err != nil {
 		fmt.Printf("Failed to clone: %v\n", err)
 		return
 	}
-	
+
 	hash, err = utils.GetGitHash(buildDir)
 	if err != nil {
 		fmt.Printf("Warning: Could not get git hash: %v\n", err)
 	}
-	
+
 	if err := applyPatches(buildDir, args.Patches); err != nil {
 		fmt.Printf("Failed to apply patches: %v\n", err)
 	}
-	
+
 build:
-	buildSystem, err := detectAndBuild(buildDir, repoName)
+	buildSystem, err := detectAndBuild(buildDir, repoName, args.Static)
 	if err != nil {
 		fmt.Printf("Build failed: %v\n", err)
 		return
 	}
-	
-	if err := installBinary(buildDir, repoName, args.Local, args.Yes); err != nil {
+
+	if err := installBinary(buildDir, repoName, args.Local, args.Yes, args.Static); err != nil {
 		fmt.Printf("Installation failed: %v\n", err)
 		return
 	}
-	
-	if err := addToPackageList(pkg, repoName, buildSystem, hash); err != nil {
+
+	if err := addToPackageList(pkg, repoName, buildSystem, hash, args.Local, args.Static); err != nil {
 		fmt.Printf("Warning: Could not update package list: %v\n", err)
 	}
-	
+
 	elapsed := time.Since(start)
 	fmt.Printf("Installed in %.2fs\n", elapsed.Seconds())
 }
@@ -402,10 +417,20 @@ func HandleInstall(args *cli.InstallArgs) {
 		fmt.Println("No packages specified")
 		return
 	}
-	for i, pkg := range args.Packages {
-		installSingle(pkg, args)
-		if i < len(args.Packages)-1 {
-			fmt.Println()
+
+	var actualPackages []string
+	for _, pkg := range args.Packages {
+		if !strings.HasPrefix(pkg, "--") {
+			actualPackages = append(actualPackages, pkg)
 		}
+	}
+
+	if len(actualPackages) == 0 {
+		fmt.Println("No valid packages specified")
+		return
+	}
+
+	for _, pkg := range actualPackages {
+		installSingle(pkg, args)
 	}
 }

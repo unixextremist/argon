@@ -12,7 +12,9 @@ import (
 func main() {
 	utils.SetupArgonDirs()
 	args := cli.ParseCLI(os.Args[1:])
-	
+	if args.InstallArgs.Static {
+		fmt.Println("DEBUG CLI Static=true")
+	}
 	switch args.Command {
 	case cli.CommandInstall:
 		currentUser, err := user.Current()
@@ -44,6 +46,18 @@ func main() {
 		commands.Search(args.SearchArgs.Query)
 	case cli.CommandHelp:
 		commands.Help()
+	case cli.CommandUpgrade:
+		currentUser, err := user.Current()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting current user: %v\n", err)
+			os.Exit(1)
+		}
+		if currentUser.Uid != "0" {
+			fmt.Fprintf(os.Stderr, "Error: argon upgrade must be run with sudo\n")
+			fmt.Fprintf(os.Stderr, "Usage: sudo argon upgrade [options]\n")
+			os.Exit(1)
+		}
+		commands.HandleUpgrade(&args.UpgradeArgs)
 	default:
 		fmt.Println("Usage: argon <command> [options]")
 		fmt.Println("Commands:")
@@ -51,6 +65,7 @@ func main() {
 		fmt.Println("  list                          List installed packages")
 		fmt.Println("  remove <package>              Remove a package (requires sudo)")
 		fmt.Println("  search <query>                Search for packages")
+		fmt.Println("  upgrade                       Upgrade installed packages (requires sudo)")
 		fmt.Println("  help                          Display this help message")
 		os.Exit(1)
 	}

@@ -8,6 +8,7 @@ const (
 	CommandRemove
 	CommandSearch
 	CommandHelp
+	CommandUpgrade
 	CommandUnknown
 )
 
@@ -18,6 +19,7 @@ type InstallArgs struct {
 	Patches       string
 	Yes           bool
 	PkgDeps       string
+	Static        bool
 }
 
 type RemoveArgs struct {
@@ -26,4 +28,9 @@ type RemoveArgs struct {
 
 type SearchArgs struct {
 	Query string
+}
+
+type UpgradeArgs struct {
+	Local  bool
+	Yes    bool
 }

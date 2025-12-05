@@ -11,6 +11,7 @@ type CliArgs struct {
 	InstallArgs InstallArgs
 	RemoveArgs  RemoveArgs
 	SearchArgs  SearchArgs
+	UpgradeArgs UpgradeArgs
 }
 
 func ParseCLI(args []string) CliArgs {
@@ -19,56 +20,160 @@ func ParseCLI(args []string) CliArgs {
 		cliArgs.Command = CommandUnknown
 		return cliArgs
 	}
+	
 	switch args[0] {
 	case "install":
 		cliArgs.Command = CommandInstall
-		installCmd := flag.NewFlagSet("install", flag.ExitOnError)
-		local := installCmd.Bool("local", false, "")
-		branch := installCmd.String("branch", "", "")
-		patches := installCmd.String("patches", "", "")
-		yes := installCmd.Bool("yes", false, "")
-		pkgdeps := installCmd.String("pkgdeps", "", "")
-		installCmd.Parse(args[1:])
-		parsedArgs := InstallArgs{
-			Local:    *local,
-			Branch:   *branch,
-			Patches:  *patches,
-			Yes:      *yes,
-			PkgDeps:  *pkgdeps,
+		
+		var packages []string
+		var local bool
+		var branch string
+		var patches string
+		var yes bool
+		var pkgdeps string
+		var static bool
+		
+		i := 1
+		for i < len(args) {
+			arg := args[i]
+			
+			switch arg {
+			case "--local":
+				local = true
+				i++
+			case "-local":
+				local = true
+				i++
+			case "--branch":
+				if i+1 < len(args) {
+					branch = args[i+1]
+					i += 2
+				} else {
+					i++
+				}
+			case "-branch":
+				if i+1 < len(args) {
+					branch = args[i+1]
+					i += 2
+				} else {
+					i++
+				}
+			case "--patches":
+				if i+1 < len(args) {
+					patches = args[i+1]
+					i += 2
+				} else {
+					i++
+				}
+			case "-patches":
+				if i+1 < len(args) {
+					patches = args[i+1]
+					i += 2
+				} else {
+					i++
+				}
+			case "--yes":
+				yes = true
+				i++
+			case "-yes":
+				yes = true
+				i++
+			case "--pkgdeps":
+				if i+1 < len(args) {
+					pkgdeps = args[i+1]
+					i += 2
+				} else {
+					i++
+				}
+			case "-pkgdeps":
+				if i+1 < len(args) {
+					pkgdeps = args[i+1]
+					i += 2
+				} else {
+					i++
+				}
+			case "--static":
+				static = true
+				i++
+			case "-static":
+				static = true
+				i++
+			default:
+				if strings.HasPrefix(arg, "--branch=") {
+					branch = strings.TrimPrefix(arg, "--branch=")
+					i++
+				} else if strings.HasPrefix(arg, "-branch=") {
+					branch = strings.TrimPrefix(arg, "-branch=")
+					i++
+				} else if strings.HasPrefix(arg, "--patches=") {
+					patches = strings.TrimPrefix(arg, "--patches=")
+					i++
+				} else if strings.HasPrefix(arg, "-patches=") {
+					patches = strings.TrimPrefix(arg, "-patches=")
+					i++
+				} else if strings.HasPrefix(arg, "--pkgdeps=") {
+					pkgdeps = strings.TrimPrefix(arg, "--pkgdeps=")
+					i++
+				} else if strings.HasPrefix(arg, "-pkgdeps=") {
+					pkgdeps = strings.TrimPrefix(arg, "-pkgdeps=")
+					i++
+				} else if strings.HasPrefix(arg, "--") || strings.HasPrefix(arg, "-") {
+					i++
+				} else {
+					packages = append(packages, arg)
+					i++
+				}
+			}
 		}
-		if *pkgdeps != "" {
-			content, err := os.ReadFile(*pkgdeps)
+		
+		parsedArgs := InstallArgs{
+			Local:    local,
+			Branch:   branch,
+			Patches:  patches,
+			Yes:      yes,
+			PkgDeps:  pkgdeps,
+			Static:   static,
+			Packages: packages,
+		}
+
+		if pkgdeps != "" {
+			content, err := os.ReadFile(pkgdeps)
 			if err == nil {
 				lines := strings.Split(strings.TrimSpace(string(content)), "\n")
 				for _, line := range lines {
 					line = strings.TrimSpace(line)
-					if line != "" {
+					if line != "" && !strings.HasPrefix(line, "--") {
 						parsedArgs.Packages = append(parsedArgs.Packages, line)
 					}
 				}
 			}
-		} else {
-			parsedArgs.Packages = installCmd.Args()
 		}
 		cliArgs.InstallArgs = parsedArgs
+
 	case "list":
 		cliArgs.Command = CommandList
 	case "remove":
 		cliArgs.Command = CommandRemove
-		if len(args) < 2 {
-			cliArgs.Command = CommandUnknown
-			return cliArgs
-		}
-		cliArgs.RemoveArgs.Package = args[1]
+		removeCmd := flag.NewFlagSet("remove", flag.ExitOnError)
+		removeCmd.Parse(args[1:])
+		cliArgs.RemoveArgs.Package = removeCmd.Arg(0)
 	case "search":
 		cliArgs.Command = CommandSearch
-		if len(args) < 2 {
-			cliArgs.Command = CommandUnknown
-			return cliArgs
-		}
-		cliArgs.SearchArgs.Query = args[1]
+		searchCmd := flag.NewFlagSet("search", flag.ExitOnError)
+		searchCmd.Parse(args[1:])
+		cliArgs.SearchArgs.Query = searchCmd.Arg(0)
 	case "help":
 		cliArgs.Command = CommandHelp
+	case "upgrade":
+		cliArgs.Command = CommandUpgrade
+		upgradeCmd := flag.NewFlagSet("upgrade", flag.ExitOnError)
+		local := upgradeCmd.Bool("local", false, "Upgrade local installations")
+		yes := upgradeCmd.Bool("yes", false, "Skip confirmation prompts")
+		upgradeCmd.Parse(args[1:])
+		cliArgs.UpgradeArgs = UpgradeArgs{
+			Local: *local,
+			Yes:   *yes,
+		}
 	default:
 		cliArgs.Command = CommandUnknown
 	}

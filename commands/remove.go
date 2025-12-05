@@ -3,35 +3,59 @@ package commands
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"argon-go/utils"
 )
 
 func Remove(packageName string) {
-	installed := utils.GetInstalledPackages()
-
-	for i, pkg := range installed {
+	packages := utils.GetInstalledPackages()
+	
+	found := false
+	var updatedPackages []utils.Package
+	var pkgToRemove utils.Package
+	
+	for _, pkg := range packages {
 		if pkg.Name == packageName {
-			installed = append(installed[:i], installed[i+1:]...)
-			
-			if err := utils.SaveInstalledPackages(installed); err != nil {
-				panic(fmt.Sprintf("Failed to update package list: %v", err))
-			}
-			
-			systemPath := filepath.Join("/usr/local/bin", packageName)
-			
-			if _, err := os.Stat(systemPath); err == nil {
-				if err := os.Remove(systemPath); err != nil {
-					fmt.Printf("Warning: Failed to remove system binary: %v\n", err)
-				} else {
-					fmt.Println("Removed system binary:", systemPath)
-				}
-			}
-			
-			fmt.Println("Removed successfully")
-			return
+			found = true
+			pkgToRemove = pkg
+		} else {
+			updatedPackages = append(updatedPackages, pkg)
 		}
 	}
-
-	fmt.Fprintf(os.Stderr, "Error: Package '%s' not found\n", packageName)
+	
+	if !found {
+		fmt.Printf("Package %s not found\n", packageName)
+		return
+	}
+	
+	var destPath string
+	if pkgToRemove.Local {
+		home, _ := os.UserHomeDir()
+		destPath = filepath.Join(home, ".local", "bin", pkgToRemove.Name)
+	} else {
+		destPath = filepath.Join("/usr/local/bin", pkgToRemove.Name)
+	}
+	
+	if _, err := os.Stat(destPath); err == nil {
+		cmd := exec.Command("rm", "-f", destPath)
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Error removing binary: %v\n", err)
+			return
+		}
+		fmt.Printf("Removed binary: %s\n", destPath)
+	}
+	
+	buildDir := filepath.Join("/tmp/argon/builds", pkgToRemove.Name)
+	if _, err := os.Stat(buildDir); err == nil {
+		os.RemoveAll(buildDir)
+		fmt.Printf("Removed build directory: %s\n", buildDir)
+	}
+	
+	if err := utils.SaveInstalledPackages(updatedPackages); err != nil {
+		fmt.Printf("Error updating package list: %v\n", err)
+		return
+	}
+	
+	fmt.Printf("Removed %s\n", packageName)
 }

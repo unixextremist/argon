@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,8 @@ type Package struct {
 	Repo        string `json:"repo"`
 	BuildSystem string `json:"build_system"`
 	Hash        string `json:"hash"`
+	Local       bool   `json:"local"`
+	Static      bool   `json:"static"`
 }
 
 func GetInstalledPackages() []Package {
@@ -64,6 +67,38 @@ func GetRepoName(pkg string) string {
 	return strings.TrimSuffix(name, ".git")
 }
 
+func GetDomainFromURL(pkg string) string {
+	if strings.Contains(pkg, "gitlab.com") {
+		return "gitlab.com"
+	}
+	if strings.Contains(pkg, "codeberg.org") {
+		return "codeberg.org"
+	}
+	if strings.Contains(pkg, "github.com") {
+		return "github.com"
+	}
+	parts := strings.Split(pkg, "/")
+	if len(parts) > 2 && strings.Contains(parts[0], ".") {
+		return parts[0]
+	}
+	return "github.com"
+}
+
+func ExtractRepoPath(pkg string) string {
+	parts := strings.Split(pkg, "://")
+	if len(parts) > 1 {
+		pkg = parts[1]
+	}
+	parts = strings.Split(pkg, "/")
+	start := 0
+	for i, part := range parts {
+		if strings.Contains(part, ".") {
+			start = i + 1
+		}
+	}
+	return strings.Join(parts[start:], "/")
+}
+
 func DirectoryExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
@@ -100,4 +135,27 @@ func GetGitHash(buildDir string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+func GetRemoteHash(repoURL string, branch string) (string, error) {
+	domain := GetDomainFromURL(repoURL)
+	repoPath := ExtractRepoPath(repoURL)
+	var cmd string
+	if branch != "" {
+		cmd = fmt.Sprintf("git ls-remote https://%s/%s refs/heads/%s", domain, repoPath, branch)
+	} else {
+		cmd = fmt.Sprintf("git ls-remote https://%s/%s HEAD", domain, repoPath)
+	}
+	output, err := exec.Command("sh", "-c", cmd).Output()
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) > 0 {
+		parts := strings.Fields(lines[0])
+		if len(parts) > 0 {
+			return parts[0], nil
+		}
+	}
+	return "", fmt.Errorf("no hash found")
 }
