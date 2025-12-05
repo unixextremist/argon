@@ -10,6 +10,7 @@ type CliArgs struct {
 	Command     CommandType
 	InstallArgs InstallArgs
 	RemoveArgs  RemoveArgs
+	SearchArgs  SearchArgs
 }
 
 func ParseCLI(args []string) CliArgs {
@@ -59,6 +60,13 @@ func ParseCLI(args []string) CliArgs {
 			return cliArgs
 		}
 		cliArgs.RemoveArgs.Package = args[1]
+	case "search":
+		cliArgs.Command = CommandSearch
+		if len(args) < 2 {
+			cliArgs.Command = CommandUnknown
+			return cliArgs
+		}
+		cliArgs.SearchArgs.Query = args[1]
 	case "help":
 		cliArgs.Command = CommandHelp
 	default:
