@@ -1,9 +1,17 @@
 package cli
+
 import (
 	"flag"
 	"os"
 	"strings"
 )
+
+type CliArgs struct {
+	Command     CommandType
+	InstallArgs InstallArgs
+	RemoveArgs  RemoveArgs
+}
+
 func ParseCLI(args []string) CliArgs {
 	var cliArgs CliArgs
 	if len(args) == 0 {
@@ -42,9 +50,19 @@ func ParseCLI(args []string) CliArgs {
 			parsedArgs.Packages = installCmd.Args()
 		}
 		cliArgs.InstallArgs = parsedArgs
+	case "list":
+		cliArgs.Command = CommandList
+	case "remove":
+		cliArgs.Command = CommandRemove
+		if len(args) < 2 {
+			cliArgs.Command = CommandUnknown
+			return cliArgs
+		}
+		cliArgs.RemoveArgs.Package = args[1]
+	case "help":
+		cliArgs.Command = CommandHelp
 	default:
 		cliArgs.Command = CommandUnknown
 	}
 	return cliArgs
 }
-
