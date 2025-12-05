@@ -1,9 +1,15 @@
 package cli
+
 type CommandType int
+
 const (
 	CommandInstall CommandType = iota
+	CommandList
+	CommandRemove
+	CommandHelp
 	CommandUnknown
 )
+
 type InstallArgs struct {
 	Packages      []string
 	Local         bool
@@ -12,7 +18,7 @@ type InstallArgs struct {
 	Yes           bool
 	PkgDeps       string
 }
-type CliArgs struct {
-	Command     CommandType
-	InstallArgs InstallArgs
+
+type RemoveArgs struct {
+	Package string
 }
