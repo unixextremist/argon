@@ -17,6 +17,9 @@ argon works by
 
 - golang
 - pkgconfig
+- git
+- patch
+- less
 - build systems like make cmake cargo etc
 
 # building 
