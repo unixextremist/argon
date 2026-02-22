@@ -13,13 +13,13 @@ const (
 )
 
 type InstallArgs struct {
-	Packages      []string
-	Local         bool
-	Branch        string
-	Patches       string
-	Yes           bool
-	PkgDeps       string
-	Static        bool
+	Packages []string
+	Local    bool
+	Branch   string
+	Patches  string
+	Yes      bool
+	PkgDeps  string
+	Static   bool
 }
 
 type RemoveArgs struct {
@@ -31,6 +31,6 @@ type SearchArgs struct {
 }
 
 type UpgradeArgs struct {
-	Local  bool
-	Yes    bool
+	Local bool
+	Yes   bool
 }

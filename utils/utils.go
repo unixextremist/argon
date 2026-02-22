@@ -18,8 +18,13 @@ type Package struct {
 	Static      bool   `json:"static"`
 }
 
+const (
+	ArgonLibDir  = "/var/lib/argon"
+	ArgonTempDir = "/tmp/argon"
+)
+
 func GetInstalledPackages() []Package {
-	filePath := "/var/lib/argon/list"
+	filePath := filepath.Join(ArgonLibDir, "list")
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return []Package{}
 	}
@@ -35,7 +40,7 @@ func GetInstalledPackages() []Package {
 }
 
 func SaveInstalledPackages(packages []Package) error {
-	filePath := "/var/lib/argon/list"
+	filePath := filepath.Join(ArgonLibDir, "list")
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return err
 	}
@@ -43,12 +48,12 @@ func SaveInstalledPackages(packages []Package) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, data, 0644)
+	return os.WriteFile(filePath, data, 0600)
 }
 
 func SetupArgonDirs() {
-	os.MkdirAll("/tmp/argon/builds", 0755)
-	os.MkdirAll("/var/lib/argon", 0755)
+	os.MkdirAll(filepath.Join(ArgonTempDir, "builds"), 0755)
+	os.MkdirAll(ArgonLibDir, 0755)
 }
 
 func GetPrivilegeCommand() string {
@@ -105,8 +110,8 @@ func DirectoryExists(path string) bool {
 }
 
 func FileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func IsDirEmpty(path string) bool {
@@ -115,8 +120,8 @@ func IsDirEmpty(path string) bool {
 		return true
 	}
 	defer dir.Close()
-	entries, _ := dir.Readdir(1)
-	return len(entries) == 0
+	entries, err := dir.Readdirnames(1)
+	return err != nil || len(entries) == 0
 }
 
 func BuildPath(base, part string) string {
@@ -140,22 +145,26 @@ func GetGitHash(buildDir string) (string, error) {
 func GetRemoteHash(repoURL string, branch string) (string, error) {
 	domain := GetDomainFromURL(repoURL)
 	repoPath := ExtractRepoPath(repoURL)
-	var cmd string
+	
+	args := []string{"ls-remote", fmt.Sprintf("https://%s/%s", domain, repoPath)}
 	if branch != "" {
-		cmd = fmt.Sprintf("git ls-remote https://%s/%s refs/heads/%s", domain, repoPath, branch)
+		args = append(args, fmt.Sprintf("refs/heads/%s", branch))
 	} else {
-		cmd = fmt.Sprintf("git ls-remote https://%s/%s HEAD", domain, repoPath)
+		args = append(args, "HEAD")
 	}
-	output, err := exec.Command("sh", "-c", cmd).Output()
+	
+	cmd := exec.Command("git", args...)
+	output, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
+	
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) > 0 {
+	if len(lines) > 0 && lines[0] != "" {
 		parts := strings.Fields(lines[0])
 		if len(parts) > 0 {
 			return parts[0], nil
 		}
 	}
-	return "", fmt.Errorf("no hash found")
+	return "", fmt.Errorf("no hash found in remote response")
 }

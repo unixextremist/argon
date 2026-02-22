@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"argon-go/cli"
 	"argon-go/utils"
@@ -25,14 +26,29 @@ func upgradePackage(pkg utils.Package, yes bool) {
 		fmt.Printf("%s is already up to date\n", pkg.Name)
 		return
 	}
-	fmt.Printf("Updating %s (%s -> %s)\n", pkg.Name, pkg.Hash[:8], newHash[:8])
+	
+	oldHash := pkg.Hash
+	if len(oldHash) > 8 {
+		oldHash = oldHash[:8]
+	}
+	newHashShort := newHash
+	if len(newHashShort) > 8 {
+		newHashShort = newHashShort[:8]
+	}
+	
+	fmt.Printf("Updating %s (%s -> %s)\n", pkg.Name, oldHash, newHashShort)
+	
 	installArgs := &cli.InstallArgs{
 		Packages: []string{pkg.Repo},
 		Local:    pkg.Local,
 		Yes:      yes,
-		Static:   false,
+		Static:   pkg.Static,
 	}
-	installSingle(pkg.Repo, installArgs)
+	
+	ctx := context.Background()
+	if err := installSingle(ctx, pkg.Repo, installArgs); err != nil {
+		fmt.Printf("Failed to upgrade %s: %v\n", pkg.Name, err)
+	}
 }
 
 func HandleUpgrade(args *cli.UpgradeArgs) {
@@ -41,11 +57,28 @@ func HandleUpgrade(args *cli.UpgradeArgs) {
 		fmt.Println("No packages installed")
 		return
 	}
+	
 	toUpgrade := packages
+	
+	if args.Local {
+		var filtered []utils.Package
+		for _, pkg := range packages {
+			if pkg.Local {
+				filtered = append(filtered, pkg)
+			}
+		}
+		toUpgrade = filtered
+	}
+	
 	if len(toUpgrade) == 0 {
-		fmt.Println("No packages to upgrade")
+		if args.Local {
+			fmt.Println("No local packages to upgrade")
+		} else {
+			fmt.Println("No packages to upgrade")
+		}
 		return
 	}
+	
 	fmt.Printf("Found %d packages to upgrade\n", len(toUpgrade))
 	for i, pkg := range toUpgrade {
 		fmt.Printf("\n[%d/%d] ", i+1, len(toUpgrade))

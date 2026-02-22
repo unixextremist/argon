@@ -2,10 +2,13 @@ package commands
 
 import (
 	"bufio"
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -14,82 +17,121 @@ import (
 	"argon-go/utils"
 )
 
-func runCommand(cmd string) error {
-	c := exec.Command("sh", "-c", cmd)
-	c.Stdout = os.Stdout
-	c.Stderr = os.Stderr
-	return c.Run()
+func cloneRepo(pkg, branch, buildDir string) error {
+	domain := utils.GetDomainFromURL(pkg)
+	repoPath := utils.ExtractRepoPath(pkg)
+	url := fmt.Sprintf("https://%s/%s", domain, repoPath)
+	
+	args := []string{"clone", "--depth=1"}
+	if branch != "" {
+		args = append(args, "--branch", branch)
+	}
+	args = append(args, url, buildDir)
+	
+	cmd := exec.Command("git", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
-func handleExistingDir(buildDir string) bool {
+func handleExistingDir(buildDir string) (bool, error) {
 	if !utils.DirectoryExists(buildDir) {
-		return false
+		return false, nil
 	}
 	if utils.IsDirEmpty(buildDir) {
-		return false
+		return false, nil
 	}
+	
 	fmt.Printf("\nBuild directory '%s' already exists.\n", buildDir)
 	fmt.Println("Choose an option:")
 	fmt.Println("  1. Use existing directory")
 	fmt.Println("  2. Remove directory and re-clone")
 	fmt.Println("  3. Abort installation")
 	fmt.Print("Choice [1-3]: ")
+	
 	reader := bufio.NewReader(os.Stdin)
-	choice, _ := reader.ReadString('\n')
+	choice, err := reader.ReadString('\n')
+	if err != nil {
+		return false, err
+	}
 	choice = strings.TrimSpace(choice)
+	
 	switch choice {
 	case "1":
 		fmt.Println("Using existing directory...")
-		return true
+		return true, nil
 	case "2":
 		fmt.Println("Removing directory and re-cloning...")
-		os.RemoveAll(buildDir)
-		return false
+		if err := os.RemoveAll(buildDir); err != nil {
+			return false, fmt.Errorf("failed to remove directory: %w", err)
+		}
+		return false, nil
 	default:
-		fmt.Println("Installation aborted")
-		return false
+		return false, fmt.Errorf("installation aborted by user")
 	}
-}
-
-func cloneRepo(pkg, branch, buildDir string) error {
-	domain := utils.GetDomainFromURL(pkg)
-	repoPath := utils.ExtractRepoPath(pkg)
-	var cmd string
-	if branch != "" {
-		cmd = fmt.Sprintf("git clone --depth=1 --branch %s https://%s/%s %s", branch, domain, repoPath, buildDir)
-	} else {
-		cmd = fmt.Sprintf("git clone --depth=1 https://%s/%s %s", domain, repoPath, buildDir)
-	}
-	return runCommand(cmd)
 }
 
 func applyPatches(buildDir, patchesDir string) error {
 	if patchesDir == "" {
 		return nil
 	}
+	
 	if !utils.DirectoryExists(patchesDir) {
-		return fmt.Errorf("patches directory does not exist")
+		return fmt.Errorf("patches directory does not exist: %s", patchesDir)
 	}
-	cmd := fmt.Sprintf("cd %s && find %s -name '*.patch' -exec patch -Np1 -i {} \\;", buildDir, patchesDir)
-	return runCommand(cmd)
+	
+	cleanPatchesDir := filepath.Clean(patchesDir)
+	if strings.Contains(cleanPatchesDir, "..") {
+		return fmt.Errorf("invalid patches directory path")
+	}
+	
+	cmd := exec.Command("find", cleanPatchesDir, "-name", "*.patch", "-type", "f")
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to find patches: %w", err)
+	}
+	
+	patches := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, patch := range patches {
+		if patch == "" {
+			continue
+		}
+		patchCmd := exec.Command("patch", "-Np1", "-i", patch)
+		patchCmd.Dir = buildDir
+		patchCmd.Stdout = os.Stdout
+		patchCmd.Stderr = os.Stderr
+		if err := patchCmd.Run(); err != nil {
+			return fmt.Errorf("failed to apply patch %s: %w", patch, err)
+		}
+	}
+	
+	return nil
 }
 
 func buildWithMake(buildDir, repoName, cflags, libs string, static bool) (string, error) {
 	env := os.Environ()
-	if cflags != "" {
-		env = append(env, "CFLAGS="+cflags)
-	}
-	if libs != "" {
-		env = append(env, "LDFLAGS="+libs)
-	}
+	
 	if static {
-		staticFlags := "-static"
-		if libs != "" {
-			staticFlags = libs + " -static"
+		staticCflags := "-static"
+		if cflags != "" {
+			staticCflags = cflags + " -static"
 		}
-		env = append(env, "LDFLAGS="+staticFlags)
-		env = append(env, "CC=gcc -static")
+		env = append(env, "CFLAGS="+staticCflags)
+		
+		staticLdflags := "-static"
+		if libs != "" {
+			staticLdflags = libs + " -static"
+		}
+		env = append(env, "LDFLAGS="+staticLdflags)
+	} else {
+		if cflags != "" {
+			env = append(env, "CFLAGS="+cflags)
+		}
+		if libs != "" {
+			env = append(env, "LDFLAGS="+libs)
+		}
 	}
+	
 	cmd := exec.Command("make")
 	cmd.Dir = buildDir
 	cmd.Env = env
@@ -99,10 +141,18 @@ func buildWithMake(buildDir, repoName, cflags, libs string, static bool) (string
 }
 
 func buildWithCargo(buildDir string, static bool) (string, error) {
-	if static {
-		return "", fmt.Errorf("static builds not supported for cargo")
-	}
 	args := []string{"build", "--release"}
+	
+	if static {
+		target := fmt.Sprintf("%s-unknown-linux-musl", runtime.GOARCH)
+		args = append(args, "--target", target)
+		
+		installTarget := exec.Command("rustup", "target", "add", target)
+		installTarget.Stdout = io.Discard
+		installTarget.Stderr = io.Discard
+		installTarget.Run() 
+	}
+	
 	cmd := exec.Command("cargo", args...)
 	cmd.Dir = buildDir
 	cmd.Stdout = os.Stdout
@@ -111,19 +161,24 @@ func buildWithCargo(buildDir string, static bool) (string, error) {
 }
 
 func buildWithCMake(buildDir string, static bool) (string, error) {
-	if static {
-		return "", fmt.Errorf("static builds not supported for cmake")
-	}
 	buildPath := filepath.Join(buildDir, "build")
-	os.MkdirAll(buildPath, 0755)
-	args := []string{".."}
-	cmd1 := exec.Command("cmake", args...)
+	if err := os.MkdirAll(buildPath, 0755); err != nil {
+		return "cmake", err
+	}
+	
+	cmakeArgs := []string{".."}
+	if static {
+		cmakeArgs = append(cmakeArgs, "-DCMAKE_EXE_LINKER_FLAGS=-static", "-DBUILD_SHARED_LIBS=OFF")
+	}
+	
+	cmd1 := exec.Command("cmake", cmakeArgs...)
 	cmd1.Dir = buildPath
 	cmd1.Stdout = os.Stdout
 	cmd1.Stderr = os.Stderr
 	if err := cmd1.Run(); err != nil {
 		return "cmake", err
 	}
+	
 	cmd2 := exec.Command("make")
 	cmd2.Dir = buildPath
 	cmd2.Stdout = os.Stdout
@@ -132,17 +187,19 @@ func buildWithCMake(buildDir string, static bool) (string, error) {
 }
 
 func buildWithConfigure(buildDir string, static bool) (string, error) {
+	configureArgs := []string{"./configure"}
 	if static {
-		return "", fmt.Errorf("static builds not supported for configure")
+		configureArgs = append(configureArgs, "LDFLAGS=-static", "--disable-shared")
 	}
-	args := []string{"./configure"}
-	cmd1 := exec.Command(args[0], args[1:]...)
+	
+	cmd1 := exec.Command(configureArgs[0], configureArgs[1:]...)
 	cmd1.Dir = buildDir
 	cmd1.Stdout = os.Stdout
 	cmd1.Stderr = os.Stderr
 	if err := cmd1.Run(); err != nil {
 		return "configure", err
 	}
+	
 	cmd2 := exec.Command("make")
 	cmd2.Dir = buildDir
 	cmd2.Stdout = os.Stdout
@@ -151,10 +208,11 @@ func buildWithConfigure(buildDir string, static bool) (string, error) {
 }
 
 func buildWithZig(buildDir string, static bool) (string, error) {
-	if static {
-		return "", fmt.Errorf("static builds not supported for zig")
-	}
 	args := []string{"build"}
+	if static {
+		args = append(args, "-Dtarget=native-native-musl")
+	}
+	
 	cmd := exec.Command("zig", args...)
 	cmd.Dir = buildDir
 	cmd.Stdout = os.Stdout
@@ -163,12 +221,17 @@ func buildWithZig(buildDir string, static bool) (string, error) {
 }
 
 func buildWithShellScript(buildDir string, static bool) (string, error) {
-	if static {
-		return "", fmt.Errorf("static builds not supported for shell scripts")
-	}
 	scriptPath := filepath.Join(buildDir, "build.sh")
-	os.Chmod(scriptPath, 0755)
+	
+	if err := os.Chmod(scriptPath, 0755); err != nil {
+		return "shell", fmt.Errorf("failed to make build.sh executable: %w", err)
+	}
+	
 	env := os.Environ()
+	if static {
+		env = append(env, "STATIC_BUILD=1")
+	}
+	
 	cmd := exec.Command("./build.sh")
 	cmd.Dir = buildDir
 	cmd.Env = env
@@ -212,18 +275,15 @@ func displayBuildFileWithLess(filepath string) error {
 func confirmBuild() bool {
 	fmt.Print("\nProceed with build? [y/N]: ")
 	reader := bufio.NewReader(os.Stdin)
-	response, _ := reader.ReadString('\n')
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false
+	}
 	response = strings.TrimSpace(strings.ToLower(response))
 	return response == "y" || response == "yes"
 }
 
 func detectAndBuild(buildDir, repoName string, static bool) (string, error) {
-	fmt.Printf("DEBUG: static=%t\n", static)
-	
-	if static {
-		return "", fmt.Errorf("static builds not supported")
-	}
-
 	if !pkgconfig.CheckPkgConfigExists() {
 		fmt.Println("Warning: pkg-config not found in PATH")
 	}
@@ -291,10 +351,15 @@ func detectAndBuild(buildDir, repoName string, static bool) (string, error) {
 }
 
 func findBinary(buildDir, repoName string, static bool) (string, error) {
+	targetDir := "release"
+	if static {
+		targetDir = fmt.Sprintf("%s-unknown-linux-musl/release", runtime.GOARCH)
+	}
+	
 	possiblePaths := []string{
 		filepath.Join(buildDir, repoName),
 		filepath.Join(buildDir, "target", "release", repoName),
-		filepath.Join(buildDir, "target", "x86_64-unknown-linux-musl", "release", repoName),
+		filepath.Join(buildDir, "target", targetDir, repoName),
 		filepath.Join(buildDir, "build", repoName),
 	}
 	
@@ -311,18 +376,32 @@ func installBinary(buildDir, repoName string, local, yes, static bool) error {
 	if err != nil {
 		return err
 	}
+	
 	var destPath string
-	var cmd string
 	if local {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
 		destPath = filepath.Join(home, ".local", "bin", repoName)
-		os.MkdirAll(filepath.Dir(destPath), 0755)
-		cmd = fmt.Sprintf("install -Dm755 %s %s", binaryPath, destPath)
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			return fmt.Errorf("failed to create directory: %w", err)
+		}
 	} else {
 		destPath = filepath.Join("/usr/local/bin", repoName)
-		cmd = fmt.Sprintf("install -m755 %s %s", binaryPath, destPath)
 	}
-	return runCommand(cmd)
+	
+	sourceData, err := os.ReadFile(binaryPath)
+	if err != nil {
+		return fmt.Errorf("failed to read binary: %w", err)
+	}
+	
+	if err := os.WriteFile(destPath, sourceData, 0755); err != nil {
+		return fmt.Errorf("failed to install binary: %w", err)
+	}
+	
+	fmt.Printf("Installed: %s -> %s\n", binaryPath, destPath)
+	return nil
 }
 
 func addToPackageList(pkg, repoName, buildSystem, hash string, local, static bool) error {
@@ -352,10 +431,15 @@ func addToPackageList(pkg, repoName, buildSystem, hash string, local, static boo
 	return utils.SaveInstalledPackages(packages)
 }
 
-func installSingle(pkg string, args *cli.InstallArgs) {
+func installSingle(ctx context.Context, pkg string, args *cli.InstallArgs) error {
 	if strings.HasPrefix(pkg, "--") {
-		fmt.Printf("Warning: Skipping '%s' as it appears to be a flag, not a package\n", pkg)
-		return
+		return fmt.Errorf("invalid package name: %s", pkg)
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
 	}
 
 	fmt.Printf("Installing %s\n", pkg)
@@ -367,9 +451,11 @@ func installSingle(pkg string, args *cli.InstallArgs) {
 	var err error
 
 	if utils.DirectoryExists(buildDir) && !utils.IsDirEmpty(buildDir) {
-		if !handleExistingDir(buildDir) {
-			os.RemoveAll(buildDir)
-		} else {
+		useExisting, err := handleExistingDir(buildDir)
+		if err != nil {
+			return err
+		}
+		if useExisting {
 			hash, err = utils.GetGitHash(buildDir)
 			if err != nil {
 				fmt.Printf("Warning: Could not get git hash: %v\n", err)
@@ -379,8 +465,7 @@ func installSingle(pkg string, args *cli.InstallArgs) {
 	}
 
 	if err := cloneRepo(pkg, args.Branch, buildDir); err != nil {
-		fmt.Printf("Failed to clone: %v\n", err)
-		return
+		return fmt.Errorf("failed to clone: %w", err)
 	}
 
 	hash, err = utils.GetGitHash(buildDir)
@@ -395,13 +480,11 @@ func installSingle(pkg string, args *cli.InstallArgs) {
 build:
 	buildSystem, err := detectAndBuild(buildDir, repoName, args.Static)
 	if err != nil {
-		fmt.Printf("Build failed: %v\n", err)
-		return
+		return fmt.Errorf("build failed: %w", err)
 	}
 
 	if err := installBinary(buildDir, repoName, args.Local, args.Yes, args.Static); err != nil {
-		fmt.Printf("Installation failed: %v\n", err)
-		return
+		return fmt.Errorf("installation failed: %w", err)
 	}
 
 	if err := addToPackageList(pkg, repoName, buildSystem, hash, args.Local, args.Static); err != nil {
@@ -410,27 +493,18 @@ build:
 
 	elapsed := time.Since(start)
 	fmt.Printf("Installed in %.2fs\n", elapsed.Seconds())
+	return nil
 }
 
-func HandleInstall(args *cli.InstallArgs) {
+func HandleInstall(ctx context.Context, args *cli.InstallArgs) {
 	if len(args.Packages) == 0 {
 		fmt.Println("No packages specified")
 		return
 	}
 
-	var actualPackages []string
 	for _, pkg := range args.Packages {
-		if !strings.HasPrefix(pkg, "--") {
-			actualPackages = append(actualPackages, pkg)
+		if err := installSingle(ctx, pkg, args); err != nil {
+			fmt.Printf("Error installing %s: %v\n", pkg, err)
 		}
-	}
-
-	if len(actualPackages) == 0 {
-		fmt.Println("No valid packages specified")
-		return
-	}
-
-	for _, pkg := range actualPackages {
-		installSingle(pkg, args)
 	}
 }

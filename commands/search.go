@@ -19,6 +19,7 @@ const (
 type githubResp struct {
 	Items []struct {
 		FullName        string `json:"full_name"`
+		Description     string `json:"description"`
 		StargazersCount int64  `json:"stargazers_count"`
 		ForksCount      int64  `json:"forks_count"`
 	} `json:"items"`
@@ -26,8 +27,22 @@ type githubResp struct {
 }
 
 func Search(query string) {
-	u, _ := url.Parse(apiURL)
-	u.RawQuery = url.Values{"q": {query}}.Encode()
+	if query == "" {
+		fmt.Fprintln(os.Stderr, "Error: empty search query")
+		return
+	}
+
+	u, err := url.Parse(apiURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse URL: %v\n", err)
+		return
+	}
+	
+	q := u.Query()
+	q.Set("q", query)
+	q.Set("sort", "stars")
+	q.Set("order", "desc")
+	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -35,6 +50,7 @@ func Search(query string) {
 		return
 	}
 	req.Header.Set("User-Agent", agent)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -59,13 +75,20 @@ func Search(query string) {
 		if gr.Message != "" {
 			fmt.Fprintf(os.Stderr, "GitHub says: %s\n", gr.Message)
 		} else {
-			fmt.Fprintln(os.Stderr, "No results")
+			fmt.Fprintln(os.Stderr, "No results found")
 		}
 		return
 	}
 
 	for i := 0; i < len(gr.Items) && i < limit; i++ {
 		it := gr.Items[i]
-		fmt.Printf("[%s] // stars - %d // forks - %d\n", it.FullName, it.StargazersCount, it.ForksCount)
+		desc := it.Description
+		if len(desc) > 50 {
+			desc = desc[:47] + "..."
+		}
+		fmt.Printf("[%s] ⭐ %d 🍴 %d\n", it.FullName, it.StargazersCount, it.ForksCount)
+		if desc != "" {
+			fmt.Printf("  %s\n", desc)
+		}
 	}
 }

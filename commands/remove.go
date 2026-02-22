@@ -3,12 +3,16 @@ package commands
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"argon-go/utils"
 )
 
 func Remove(packageName string) {
+	if packageName == "" {
+		fmt.Println("Error: no package specified")
+		return
+	}
+
 	packages := utils.GetInstalledPackages()
 	
 	found := false
@@ -31,25 +35,33 @@ func Remove(packageName string) {
 	
 	var destPath string
 	if pkgToRemove.Local {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Printf("Error getting home directory: %v\n", err)
+			return
+		}
 		destPath = filepath.Join(home, ".local", "bin", pkgToRemove.Name)
 	} else {
 		destPath = filepath.Join("/usr/local/bin", pkgToRemove.Name)
 	}
 	
 	if _, err := os.Stat(destPath); err == nil {
-		cmd := exec.Command("rm", "-f", destPath)
-		if err := cmd.Run(); err != nil {
+		if err := os.Remove(destPath); err != nil {
 			fmt.Printf("Error removing binary: %v\n", err)
 			return
 		}
 		fmt.Printf("Removed binary: %s\n", destPath)
+	} else {
+		fmt.Printf("Binary not found: %s\n", destPath)
 	}
 	
 	buildDir := filepath.Join("/tmp/argon/builds", pkgToRemove.Name)
-	if _, err := os.Stat(buildDir); err == nil {
-		os.RemoveAll(buildDir)
-		fmt.Printf("Removed build directory: %s\n", buildDir)
+	if utils.DirectoryExists(buildDir) {
+		if err := os.RemoveAll(buildDir); err != nil {
+			fmt.Printf("Warning: could not remove build directory: %v\n", err)
+		} else {
+			fmt.Printf("Removed build directory: %s\n", buildDir)
+		}
 	}
 	
 	if err := utils.SaveInstalledPackages(updatedPackages); err != nil {

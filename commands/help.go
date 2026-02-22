@@ -2,10 +2,9 @@ package commands
 
 import (
 	"fmt"
-	"os"
 )
 
-func Help() {
+func Help(osArgs []string) {
 	fmt.Println("Argon Package Manager")
 	fmt.Println()
 	fmt.Println("Usage: argon <command> [options]")
@@ -24,10 +23,10 @@ func Help() {
 	fmt.Println("  argon upgrade --help")
 	fmt.Println("  argon search --help")
 	
-	if len(os.Args) > 2 {
-		cmd := os.Args[1]
-		arg := os.Args[2]
-		if arg == "--help" {
+	if len(osArgs) > 2 {
+		cmd := osArgs[1]
+		arg := osArgs[2]
+		if arg == "--help" || arg == "-h" {
 			switch cmd {
 			case "install":
 				fmt.Println()
@@ -41,7 +40,7 @@ func Help() {
 			case "upgrade":
 				fmt.Println()
 				fmt.Println("Upgrade options:")
-				fmt.Println("  --local         Upgrade local installations")
+				fmt.Println("  --local         Upgrade local installations only")
 				fmt.Println("  --yes           Skip confirmation prompts")
 			case "remove":
 				fmt.Println()

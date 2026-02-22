@@ -1,62 +1,62 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"os/user"
+	"syscall"
+
 	"argon-go/cli"
 	"argon-go/commands"
 	"argon-go/utils"
 )
 
+func requireRoot() {
+	currentUser, err := user.Current()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting current user: %v\n", err)
+		os.Exit(1)
+	}
+	if currentUser.Uid != "0" {
+		fmt.Fprintf(os.Stderr, "Error: this command must be run with sudo\n")
+		os.Exit(1)
+	}
+}
+
 func main() {
 	utils.SetupArgonDirs()
+	
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		fmt.Println("\nInterrupted. Cleaning up...")
+		cancel()
+		os.Exit(1)
+	}()
+
 	args := cli.ParseCLI(os.Args[1:])
-	if args.InstallArgs.Static {
-		fmt.Println("DEBUG CLI Static=true")
-	}
+	
 	switch args.Command {
 	case cli.CommandInstall:
-		currentUser, err := user.Current()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting current user: %v\n", err)
-			os.Exit(1)
-		}
-		if currentUser.Uid != "0" {
-			fmt.Fprintf(os.Stderr, "Error: argon install must be run with sudo\n")
-			fmt.Fprintf(os.Stderr, "Usage: sudo argon install <package> [options]\n")
-			os.Exit(1)
-		}
-		commands.HandleInstall(&args.InstallArgs)
+		requireRoot()
+		commands.HandleInstall(ctx, &args.InstallArgs)
 	case cli.CommandList:
 		commands.List()
 	case cli.CommandRemove:
-		currentUser, err := user.Current()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting current user: %v\n", err)
-			os.Exit(1)
-		}
-		if currentUser.Uid != "0" {
-			fmt.Fprintf(os.Stderr, "Error: argon remove must be run with sudo\n")
-			fmt.Fprintf(os.Stderr, "Usage: sudo argon remove <package>\n")
-			os.Exit(1)
-		}
+		requireRoot()
 		commands.Remove(args.RemoveArgs.Package)
 	case cli.CommandSearch:
 		commands.Search(args.SearchArgs.Query)
 	case cli.CommandHelp:
-		commands.Help()
+		commands.Help(os.Args)
 	case cli.CommandUpgrade:
-		currentUser, err := user.Current()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting current user: %v\n", err)
-			os.Exit(1)
-		}
-		if currentUser.Uid != "0" {
-			fmt.Fprintf(os.Stderr, "Error: argon upgrade must be run with sudo\n")
-			fmt.Fprintf(os.Stderr, "Usage: sudo argon upgrade [options]\n")
-			os.Exit(1)
-		}
+		requireRoot()
 		commands.HandleUpgrade(&args.UpgradeArgs)
 	default:
 		fmt.Println("Usage: argon <command> [options]")
