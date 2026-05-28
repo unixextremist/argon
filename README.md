@@ -25,3 +25,7 @@ argon works by
 # building 
 
 - just run make
+
+# known issues to be adressed. 
+
+- repo name and binary name have to be the same. 
