@@ -44,9 +44,7 @@ func main() {
 	
 	switch args.Command {
 	case cli.CommandInstall:
-		if !args.InstallArgs.Local {
-			requireRoot()
-		}
+		requireRoot()
 		commands.HandleInstall(ctx, &args.InstallArgs)
 	case cli.CommandList:
 		commands.List()
@@ -63,7 +61,7 @@ func main() {
 	default:
 		fmt.Println("Usage: argon <command> [options]")
 		fmt.Println("Commands:")
-		fmt.Println("  install <package> [options]  Install a package (requires sudo unless -local)")
+		fmt.Println("  install <package> [options]  Install a package (requires sudo)")
 		fmt.Println("  list                          List installed packages")
 		fmt.Println("  remove <package>              Remove a package (requires sudo)")
 		fmt.Println("  search <query>                Search for packages")
