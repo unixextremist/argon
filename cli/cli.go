@@ -26,7 +26,6 @@ func ParseCLI(args []string) CliArgs {
 		cliArgs.Command = CommandInstall
 		installCmd := flag.NewFlagSet("install", flag.ExitOnError)
 		
-		local := installCmd.Bool("local", false, "Install locally (~/.local/bin)")
 		branch := installCmd.String("branch", "", "Use specific git branch")
 		patches := installCmd.String("patches", "", "Apply patches from directory")
 		yes := installCmd.Bool("yes", false, "Skip confirmation prompts")
@@ -52,7 +51,6 @@ func ParseCLI(args []string) CliArgs {
 		
 		cliArgs.InstallArgs = InstallArgs{
 			Packages: packages,
-			Local:    *local,
 			Branch:   *branch,
 			Patches:  *patches,
 			Yes:      *yes,
@@ -81,12 +79,10 @@ func ParseCLI(args []string) CliArgs {
 	case "upgrade":
 		cliArgs.Command = CommandUpgrade
 		upgradeCmd := flag.NewFlagSet("upgrade", flag.ExitOnError)
-		local := upgradeCmd.Bool("local", false, "Upgrade local installations only")
 		yes := upgradeCmd.Bool("yes", false, "Skip confirmation prompts")
 		upgradeCmd.Parse(args[1:])
 		cliArgs.UpgradeArgs = UpgradeArgs{
-			Local: *local,
-			Yes:   *yes,
+			Yes: *yes,
 		}
 	default:
 		if args[0] == "--help" || args[0] == "-h" {
