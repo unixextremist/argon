@@ -441,25 +441,13 @@ func findBinary(buildDir, repoName string, static bool) (string, error) {
 	return binaries[0], nil
 }
 
-func installBinary(buildDir, repoName string, local, yes, static bool) error {
+func installBinary(buildDir, repoName string, yes, static bool) error {
 	binaryPath, err := findBinary(buildDir, repoName, static)
 	if err != nil {
 		return err
 	}
 	
-	var destPath string
-	if local {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
-		}
-		destPath = filepath.Join(home, ".local", "bin", repoName)
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
-		}
-	} else {
-		destPath = filepath.Join("/usr/local/bin", repoName)
-	}
+	destPath := filepath.Join("/usr/local/bin", repoName)
 	
 	sourceData, err := os.ReadFile(binaryPath)
 	if err != nil {
@@ -474,7 +462,7 @@ func installBinary(buildDir, repoName string, local, yes, static bool) error {
 	return nil
 }
 
-func addToPackageList(pkg, repoName, buildSystem, hash string, local, static bool) error {
+func addToPackageList(pkg, repoName, buildSystem, hash string, static bool) error {
 	packages := utils.GetInstalledPackages()
 
 	for i, existingPkg := range packages {
@@ -482,7 +470,6 @@ func addToPackageList(pkg, repoName, buildSystem, hash string, local, static boo
 			packages[i].Repo = pkg
 			packages[i].BuildSystem = buildSystem
 			packages[i].Hash = hash
-			packages[i].Local = local
 			packages[i].Static = static
 			return utils.SaveInstalledPackages(packages)
 		}
@@ -493,7 +480,6 @@ func addToPackageList(pkg, repoName, buildSystem, hash string, local, static boo
 		Repo:        pkg,
 		BuildSystem: buildSystem,
 		Hash:        hash,
-		Local:       local,
 		Static:      static,
 	}
 
@@ -553,11 +539,11 @@ build:
 		return fmt.Errorf("build failed: %w", err)
 	}
 
-	if err := installBinary(buildDir, repoName, args.Local, args.Yes, args.Static); err != nil {
+	if err := installBinary(buildDir, repoName, args.Yes, args.Static); err != nil {
 		return fmt.Errorf("installation failed: %w", err)
 	}
 
-	if err := addToPackageList(pkg, repoName, buildSystem, hash, args.Local, args.Static); err != nil {
+	if err := addToPackageList(pkg, repoName, buildSystem, hash, args.Static); err != nil {
 		fmt.Printf("Warning: Could not update package list: %v\n", err)
 	}
 
