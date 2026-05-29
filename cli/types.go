@@ -14,7 +14,6 @@ const (
 
 type InstallArgs struct {
 	Packages []string
-	Local    bool
 	Branch   string
 	Patches  string
 	Yes      bool
@@ -31,6 +30,5 @@ type SearchArgs struct {
 }
 
 type UpgradeArgs struct {
-	Local bool
-	Yes   bool
+	Yes bool
 }
