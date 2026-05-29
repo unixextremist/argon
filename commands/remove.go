@@ -33,17 +33,7 @@ func Remove(packageName string) {
 		return
 	}
 	
-	var destPath string
-	if pkgToRemove.Local {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			fmt.Printf("Error getting home directory: %v\n", err)
-			return
-		}
-		destPath = filepath.Join(home, ".local", "bin", pkgToRemove.Name)
-	} else {
-		destPath = filepath.Join("/usr/local/bin", pkgToRemove.Name)
-	}
+	destPath := filepath.Join("/usr/local/bin", pkgToRemove.Name)
 	
 	if _, err := os.Stat(destPath); err == nil {
 		if err := os.Remove(destPath); err != nil {
