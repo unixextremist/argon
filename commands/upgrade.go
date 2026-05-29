@@ -40,7 +40,6 @@ func upgradePackage(pkg utils.Package, yes bool) {
 	
 	installArgs := &cli.InstallArgs{
 		Packages: []string{pkg.Repo},
-		Local:    pkg.Local,
 		Yes:      yes,
 		Static:   pkg.Static,
 	}
@@ -60,22 +59,8 @@ func HandleUpgrade(args *cli.UpgradeArgs) {
 	
 	toUpgrade := packages
 	
-	if args.Local {
-		var filtered []utils.Package
-		for _, pkg := range packages {
-			if pkg.Local {
-				filtered = append(filtered, pkg)
-			}
-		}
-		toUpgrade = filtered
-	}
-	
 	if len(toUpgrade) == 0 {
-		if args.Local {
-			fmt.Println("No local packages to upgrade")
-		} else {
-			fmt.Println("No packages to upgrade")
-		}
+		fmt.Println("No packages to upgrade")
 		return
 	}
 	
