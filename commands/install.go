@@ -356,19 +356,89 @@ func findBinary(buildDir, repoName string, static bool) (string, error) {
 		targetDir = fmt.Sprintf("%s-unknown-linux-musl/release", runtime.GOARCH)
 	}
 	
-	possiblePaths := []string{
+	exactPaths := []string{
 		filepath.Join(buildDir, repoName),
 		filepath.Join(buildDir, "target", "release", repoName),
 		filepath.Join(buildDir, "target", targetDir, repoName),
 		filepath.Join(buildDir, "build", repoName),
 	}
 	
-	for _, path := range possiblePaths {
+	for _, path := range exactPaths {
 		if utils.FileExists(path) {
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("binary not found")
+	
+	outputDirs := []string{
+		filepath.Join(buildDir, "target", "release"),
+		filepath.Join(buildDir, "target", targetDir),
+		filepath.Join(buildDir, "build"),
+	}
+	
+	var binaries []string
+	for _, dir := range outputDirs {
+		if !utils.DirectoryExists(dir) {
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			if info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
+				binaries = append(binaries, filepath.Join(dir, entry.Name()))
+			}
+		}
+	}
+	
+	if len(binaries) > 0 {
+		return binaries[0], nil
+	}
+	
+	entries, err := os.ReadDir(buildDir)
+	if err != nil {
+		return "", fmt.Errorf("binary not found")
+	}
+	
+	skip := map[string]bool{
+		"build.sh": true,
+		"configure": true,
+		"CMakeLists.txt": true,
+		"Makefile": true,
+		"makefile": true,
+		"build.zig": true,
+		"Cargo.toml": true,
+	}
+	
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if skip[name] {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
+			binaries = append(binaries, filepath.Join(buildDir, name))
+		}
+	}
+	
+	if len(binaries) == 0 {
+		return "", fmt.Errorf("binary not found")
+	}
+	
+	return binaries[0], nil
 }
 
 func installBinary(buildDir, repoName string, local, yes, static bool) error {
