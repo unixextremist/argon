@@ -14,7 +14,6 @@ type Package struct {
 	Repo        string `json:"repo"`
 	BuildSystem string `json:"build_system"`
 	Hash        string `json:"hash"`
-	Local       bool   `json:"local"`
 	Static      bool   `json:"static"`
 }
 
@@ -48,7 +47,7 @@ func SaveInstalledPackages(packages []Package) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, data, 0600)
+	return os.WriteFile(filePath, data, 0644)
 }
 
 func SetupArgonDirs() {
